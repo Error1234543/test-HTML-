@@ -1,3 +1,4 @@
 pyTelegramBotAPI
 pdfplumber
 google-generativeai
+flask
