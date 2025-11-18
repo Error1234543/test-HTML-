@@ -1,4 +1,3 @@
-import os
 import telebot
 import pdfplumber
 import html
@@ -6,18 +5,19 @@ import json
 import google.generativeai as genai
 from datetime import datetime
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-if not TELEGRAM_TOKEN or not GEMINI_API_KEY:
-    raise ValueError("ERROR: Please set TELEGRAM_TOKEN & GEMINI_API_KEY")
+# -----------------------------------------------------------------
+#  DIRECT TOKEN SETTING (NO ENVIRONMENT NEEDED)
+# -----------------------------------------------------------------
+TELEGRAM_TOKEN = "PASTE_YOUR_TELEGRAM_BOT_TOKEN_HERE"
+GEMINI_API_KEY = "PASTE_YOUR_GEMINI_KEY_HERE"
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-1.5-flash")
 
-
-#   EXTRACT PDF TEXT
+# -----------------------------------------------------------------
+# PDF TEXT EXTRACTOR
+# -----------------------------------------------------------------
 def extract_pdf_text(path):
     pages = []
     with pdfplumber.open(path) as pdf:
@@ -28,8 +28,9 @@ def extract_pdf_text(path):
                 pages.append("")
     return "\n\n".join(pages)
 
-
-#  PARSE MCQS USING GEMINI
+# -----------------------------------------------------------------
+# GEMINI MCQ PARSER
+# -----------------------------------------------------------------
 def parse_mcqs_with_gemini(text):
     prompt = """
 Extract all MCQ questions from this Gujarati/Hindi text.
@@ -41,7 +42,7 @@ TEXT:
 """ + text
 
     response = model.generate_content(prompt)
-    output = response.text.strip().replace("```json", "").replace("```", "")
+    output = response.text.strip().replace("```json","").replace("```","")
 
     try:
         return json.loads(output)
@@ -52,8 +53,9 @@ TEXT:
             return json.loads(match.group())
         return []
 
-
-#   GENERATE HTML TEST
+# -----------------------------------------------------------------
+# HTML TEST GENERATOR
+# -----------------------------------------------------------------
 def generate_html(mcqs, title):
 
     safe = []
@@ -146,13 +148,12 @@ render();
 """
     return html_code
 
-
-
-#  BOT HANDLER
+# -----------------------------------------------------------------
+#   TELEGRAM BOT HANDLER
+# -----------------------------------------------------------------
 @bot.message_handler(commands=['start'])
 def start(m):
-    bot.reply_to(m, "Send Gujarati/Hindi PDF.\nI’ll generate HTML test using Gemini AI.")
-
+    bot.reply_to(m, "Send Gujarati/Hindi PDF.\nI'll generate MCQ Test HTML using Gemini AI.")
 
 @bot.message_handler(content_types=['document'])
 def pdf_handler(m):
@@ -176,7 +177,7 @@ def pdf_handler(m):
 
         bot.send_message(m.chat.id, "✔ MCQs detected.\nGenerating HTML Test…")
 
-        title = (m.document.file_name or "Test").replace(".pdf", "")
+        title = (m.document.file_name or "Test").replace(".pdf","")
 
         html_file = generate_html(mcqs, title)
 
