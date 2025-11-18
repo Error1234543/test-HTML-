@@ -16,7 +16,7 @@ import pytesseract
 
 # -------- CONFIG ----------
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or "8170315201:AAFG-m59j0-yxn02ZSxXjAYqR8fJt5OJJ_k"
-GEMINI_API_KEY = os.getenv("AIzaSyB5TA6nDIj8VARsC4LPfdxu7_HBnetmPg8") or ""
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or "AIzaSyB5TA6nDIj8VARsC4LPfdxu7_HBnetmPg8"
 
 if not TELEGRAM_TOKEN or not GEMINI_API_KEY:
     raise RuntimeError("Please set TELEGRAM_TOKEN and GEMINI_API_KEY environment variables.")
