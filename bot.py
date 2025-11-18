@@ -5,32 +5,34 @@ import json
 import google.generativeai as genai
 from datetime import datetime
 from flask import Flask
+import threading
 
-# ------------------------------------------------------
-# TOKENS (set here, no Render env needed)
-# ------------------------------------------------------
+# -----------------------------------------------------------------
+#  DIRECT TOKENS (NO ENV NEEDED)
+# -----------------------------------------------------------------
 TELEGRAM_TOKEN = "8170315201:AAFG-m59j0-yxn02ZSxXjAYqR8fJt5OJJ_k"
 GEMINI_API_KEY = "AIzaSyB5TA6nDIj8VARsC4LPfdxu7_HBnetmPg8"
 
-# ------------------------------------------------------
-# TELEGRAM + GEMINI SETUP
-# ------------------------------------------------------
+# -----------------------------------------------------------------
+#  TELEGRAM BOT + GEMINI SETUP
+# -----------------------------------------------------------------
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-1.5-flash")
 
-# ------------------------------------------------------
-# DUMMY FLASK APP FOR RENDER (keeps port open)
-# ------------------------------------------------------
+# -----------------------------------------------------------------
+#  FLASK SERVER FOR RENDER (REQUIRED FOR FREE PLAN)
+# -----------------------------------------------------------------
 app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "Telegram MCQ Bot Running Successfully!"
+    return "MCQ Test Bot Running Successfully! ✔"
 
-# ------------------------------------------------------
-# PDF EXTRACTOR
-# ------------------------------------------------------
+
+# -----------------------------------------------------------------
+# PDF TEXT EXTRACTOR
+# -----------------------------------------------------------------
 def extract_pdf_text(path):
     pages = []
     with pdfplumber.open(path) as pdf:
@@ -41,9 +43,10 @@ def extract_pdf_text(path):
                 pages.append("")
     return "\n\n".join(pages)
 
-# ------------------------------------------------------
+
+# -----------------------------------------------------------------
 # GEMINI MCQ PARSER
-# ------------------------------------------------------
+# -----------------------------------------------------------------
 def parse_mcqs_with_gemini(text):
     prompt = """
 Extract all MCQ questions from this Gujarati/Hindi text.
@@ -57,6 +60,7 @@ TEXT:
     response = model.generate_content(prompt)
     output = response.text.strip().replace("```json","").replace("```","")
 
+    # Try direct JSON parsing
     try:
         return json.loads(output)
     except:
@@ -66,9 +70,10 @@ TEXT:
             return json.loads(match.group())
         return []
 
-# ------------------------------------------------------
+
+# -----------------------------------------------------------------
 # HTML TEST GENERATOR
-# ------------------------------------------------------
+# -----------------------------------------------------------------
 def generate_html(mcqs, title):
 
     safe = []
@@ -80,7 +85,7 @@ def generate_html(mcqs, title):
         })
 
     js_array = json.dumps(safe, ensure_ascii=False)
-    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
 
     html_code = """
 <!doctype html>
@@ -102,7 +107,7 @@ body{font-family:Arial;background:#0d1117;color:white;padding:15px}
 <p>Generated at: """ + now + """</p>
 
 <div id="test"></div>
-<button onclick="finishTest()">Finish</button>
+<button onclick="finishTest()">Finish Test</button>
 
 <div id="result" class="card" style="display:none"></div>
 
@@ -111,20 +116,21 @@ let questions = """ + js_array + """;
 let ans = Array(questions.length).fill(null);
 
 function render() {
-    let html = "";
+    let htmlData = "";
     questions.forEach((q,i)=>{
-        html += `<div class='card'><b>Q${i+1}.</b> ${q.text}<br>`;
+        htmlData += `<div class='card'><b>Q${i+1}.</b> ${q.text}<br>`;
         q.choices.forEach((c,j)=>{
-            html += `<div class='opt' onclick='selectOpt(${i},${j},this)'>${String.fromCharCode(65+j)}. ${c}</div>`;
+            htmlData += `<div class='opt' onclick='selectOpt(${i},${j},this)'>${String.fromCharCode(65+j)}. ${c}</div>`;
         });
-        html += "</div>";
+        htmlData += "</div>";
     });
-    document.getElementById("test").innerHTML = html;
+    document.getElementById("test").innerHTML = htmlData;
 }
 
 function selectOpt(qn,on,el){
     if(ans[qn] !== null) return;
     ans[qn] = on;
+
     let parent = el.parentNode;
     [...parent.children].forEach((x,idx)=>{
         x.style.pointerEvents = "none";
@@ -160,12 +166,14 @@ render();
 """
     return html_code
 
-# ------------------------------------------------------
+
+# -----------------------------------------------------------------
 # TELEGRAM BOT HANDLERS
-# ------------------------------------------------------
+# -----------------------------------------------------------------
 @bot.message_handler(commands=['start'])
 def start(m):
     bot.reply_to(m, "Send Gujarati/Hindi PDF.\nI'll generate MCQ Test HTML using Gemini AI 🤖")
+
 
 @bot.message_handler(content_types=['document'])
 def pdf_handler(m):
@@ -187,7 +195,7 @@ def pdf_handler(m):
             bot.reply_to(m.chat.id, "❌ No MCQs found.")
             return
 
-        bot.send_message(m.chat.id, "✔ MCQs detected.\nGenerating HTML Test…")
+        bot.send_message(m.chat.id, f"✔ Found {len(mcqs)} MCQs\nGenerating HTML Test…")
 
         title = (m.document.file_name or "Test").replace(".pdf","")
         html_file = generate_html(mcqs, title)
@@ -196,21 +204,27 @@ def pdf_handler(m):
         with open(output, "w", encoding="utf-8") as f:
             f.write(html_file)
 
-        bot.send_document(m.chat.id, open(output, "rb"), caption="Your HTML Test is Ready ✔")
+        bot.send_document(m.chat.id, open(output, "rb"),
+                          caption="Your HTML MCQ Test Ready ✔")
 
     except Exception as e:
         bot.reply_to(m, f"Error: {e}")
 
-# ------------------------------------------------------
-# RUN EVERYTHING
-# ------------------------------------------------------
-import threading
 
+# -----------------------------------------------------------------
+# RUN BOT + FLASK (REQUIRED FOR RENDER FREE PLAN)
+# -----------------------------------------------------------------
 def run_bot():
     bot.infinity_polling()
 
 threading.Thread(target=run_bot).start()
 
-# Flask server for Render
+
+# Flask server (port 10000 for Render free plan)
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
+
+
+
+
+
