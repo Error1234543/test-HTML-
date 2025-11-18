@@ -1,230 +1,152 @@
 import telebot
 import pdfplumber
-import html
-import json
 import google.generativeai as genai
-from datetime import datetime
-from flask import Flask
-import threading
+import time
+import os
 
-# -----------------------------------------------------------------
-#  DIRECT TOKENS (NO ENV NEEDED)
-# -----------------------------------------------------------------
-TELEGRAM_TOKEN = "8170315201:AAFG-m59j0-yxn02ZSxXjAYqR8fJt5OJJ_k"
-GEMINI_API_KEY = "AIzaSyB5TA6nDIj8VARsC4LPfdxu7_HBnetmPg8"
+# -------------------------------
+# 🔑 SET YOUR TOKENS HERE
+# -------------------------------
+TELEGRAM_TOKEN = "PASTE_YOUR_BOT_TOKEN_HERE"
+GEMINI_API_KEY = "PASTE_YOUR_GEMINI_API_KEY_HERE"
 
-# -----------------------------------------------------------------
-#  TELEGRAM BOT + GEMINI SETUP
-# -----------------------------------------------------------------
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-1.5-flash")
 
-# -----------------------------------------------------------------
-#  FLASK SERVER FOR RENDER (REQUIRED FOR FREE PLAN)
-# -----------------------------------------------------------------
-app = Flask(__name__)
+# Use stable model
+model = genai.GenerativeModel("models/gemini-2.0-flash")
 
-@app.route("/")
-def home():
-    return "MCQ Test Bot Running Successfully! ✔"
-
-
-# -----------------------------------------------------------------
-# PDF TEXT EXTRACTOR
-# -----------------------------------------------------------------
-def extract_pdf_text(path):
-    pages = []
+# -------------------------------
+# PDF → TEXT
+# -------------------------------
+def extract_text_from_pdf(path):
+    text = ""
     with pdfplumber.open(path) as pdf:
-        for p in pdf.pages:
-            try:
-                pages.append(p.extract_text() or "")
-            except:
-                pages.append("")
-    return "\n\n".join(pages)
+        for page in pdf.pages:
+            text += page.extract_text() + "\n"
+    return text
 
-
-# -----------------------------------------------------------------
-# GEMINI MCQ PARSER
-# -----------------------------------------------------------------
-def parse_mcqs_with_gemini(text):
-    prompt = """
-Extract all MCQ questions from this Gujarati/Hindi text.
-Return ONLY JSON:
-[
- {"qno":1, "question":"...", "options":["A","B","C","D"], "correct":2}
-]
-TEXT:
-""" + text
-
-    response = model.generate_content(prompt)
-    output = response.text.strip().replace("```json","").replace("```","")
-
-    # Try direct JSON parsing
-    try:
-        return json.loads(output)
-    except:
-        import re
-        match = re.search(r'\[.*\]', output, re.S)
-        if match:
-            return json.loads(match.group())
-        return []
-
-
-# -----------------------------------------------------------------
-# HTML TEST GENERATOR
-# -----------------------------------------------------------------
-def generate_html(mcqs, title):
-
-    safe = []
-    for q in mcqs:
-        safe.append({
-            "text": html.escape(q["question"]),
-            "choices": [html.escape(c) for c in q["options"]],
-            "correctIndex": int(q["correct"])
-        })
-
-    js_array = json.dumps(safe, ensure_ascii=False)
-    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-
-    html_code = """
-<!doctype html>
+# -------------------------------
+# Generate HTML TEST
+# -------------------------------
+def generate_test_html(questions):
+    html = """
 <html>
 <head>
-<meta charset="utf-8"/>
-<title>""" + title + """</title>
+<title>Test</title>
 <style>
-body{font-family:Arial;background:#0d1117;color:white;padding:15px}
-.card{background:#111827;padding:15px;border-radius:10px;margin-top:10px}
-.opt{padding:10px;border:1px solid #333;border-radius:6px;margin-top:6px;cursor:pointer}
-.correct{background:#065f46}
-.wrong{background:#7f1d1d}
+body{font-family:Arial;background:#f2f2f2;padding:20px;}
+.card{background:#fff;padding:15px;margin:10px;border-radius:10px;box-shadow:0 0 5px #aaa;}
+.btn{padding:10px 20px;background:#007bff;color:#fff;border:none;border-radius:5px;}
 </style>
+<script>
+let index = 0;
+let correct = 0;
+let data = QUESTIONS;
+
+function showQ(){
+    if(index >= data.length){
+        document.body.innerHTML = "<h2>Test Finished!</h2><h3>Score: "+correct+" / "+data.length+"</h3>";
+        return;
+    }
+    let q = data[index];
+    let html = "<div class='card'><b>Q"+(index+1)+".</b> "+q.q+"<br><br>";
+    for(let o of q.options){
+        html += "<button class='btn' onclick='check(\""+o+"\")'>"+o+"</button><br><br>";
+    }
+    html += "</div>";
+    document.body.innerHTML = html;
+}
+
+function check(option){
+    if(option === data[index].ans){ correct++; }
+    index++;
+    showQ();
+}
+window.onload = showQ;
+</script>
 </head>
 <body>
-
-<h2>""" + title + """</h2>
-<p>Generated at: """ + now + """</p>
-
-<div id="test"></div>
-<button onclick="finishTest()">Finish Test</button>
-
-<div id="result" class="card" style="display:none"></div>
-
-<script>
-let questions = """ + js_array + """;
-let ans = Array(questions.length).fill(null);
-
-function render() {
-    let htmlData = "";
-    questions.forEach((q,i)=>{
-        htmlData += `<div class='card'><b>Q${i+1}.</b> ${q.text}<br>`;
-        q.choices.forEach((c,j)=>{
-            htmlData += `<div class='opt' onclick='selectOpt(${i},${j},this)'>${String.fromCharCode(65+j)}. ${c}</div>`;
-        });
-        htmlData += "</div>";
-    });
-    document.getElementById("test").innerHTML = htmlData;
-}
-
-function selectOpt(qn,on,el){
-    if(ans[qn] !== null) return;
-    ans[qn] = on;
-
-    let parent = el.parentNode;
-    [...parent.children].forEach((x,idx)=>{
-        x.style.pointerEvents = "none";
-        if(idx === questions[qn].correctIndex) x.classList.add("correct");
-        else if(idx === on) x.classList.add("wrong");
-    });
-}
-
-function finishTest(){
-    let right = 0;
-    ans.forEach((a,i)=>{ if(a === questions[i].correctIndex) right++; });
-
-    let out = `<h3>Result</h3>
-               <p>Score: ${right} / ${questions.length}</p><hr>`;
-
-    questions.forEach((q,i)=>{
-        if(ans[i] !== q.correctIndex){
-            out += `<p><b>Q${i+1}:</b> ${q.text}<br>
-                    Your: ${ans[i]===null? "Not answered" : q.choices[ans[i]]}<br>
-                    Correct: ${q.choices[q.correctIndex]}</p><hr>`;
-        }
-    });
-
-    document.getElementById("result").style.display="block";
-    document.getElementById("result").innerHTML = out;
-}
-
-render();
-</script>
-
 </body>
 </html>
 """
-    return html_code
+    # Insert actual JSON questions
+    import json
+    return html.replace("QUESTIONS", json.dumps(questions))
 
 
-# -----------------------------------------------------------------
-# TELEGRAM BOT HANDLERS
-# -----------------------------------------------------------------
-@bot.message_handler(commands=['start'])
-def start(m):
-    bot.reply_to(m, "Send Gujarati/Hindi PDF.\nI'll generate MCQ Test HTML using Gemini AI 🤖")
+# -------------------------------
+# Gemini: Create Test Questions
+# -------------------------------
+def create_mcq(text):
+    prompt = f"""
+You are an expert Gujarati teacher.
+Convert the following PDF content into EXACT MCQ format.
 
+Rules:
+- All questions in Gujarati only
+- Each question must have 4 options
+- Give correct answer
+- Return in this JSON format only:
+[
+  {{"q":"question", "options":["A","B","C","D"], "ans":"A"}}
+]
 
-@bot.message_handler(content_types=['document'])
-def pdf_handler(m):
+CONTENT:
+{text}
+"""
+
+    resp = model.generate_content(prompt)
+    import json
+
     try:
-        file_info = bot.get_file(m.document.file_id)
-        raw = bot.download_file(file_info.file_path)
+        data = json.loads(resp.text)
+    except:
+        # Gemini kabhi kabhi code block deta hai → clean
+        cleaned = resp.text.replace("```json", "").replace("```", "")
+        data = json.loads(cleaned)
 
-        path = "/tmp/in.pdf"
-        with open(path, "wb") as f:
-            f.write(raw)
-
-        bot.reply_to(m, "Extracting PDF…")
-
-        text = extract_pdf_text(path)
-        bot.send_message(m.chat.id, "Detecting MCQs using Gemini AI…")
-
-        mcqs = parse_mcqs_with_gemini(text)
-        if not mcqs:
-            bot.reply_to(m.chat.id, "❌ No MCQs found.")
-            return
-
-        bot.send_message(m.chat.id, f"✔ Found {len(mcqs)} MCQs\nGenerating HTML Test…")
-
-        title = (m.document.file_name or "Test").replace(".pdf","")
-        html_file = generate_html(mcqs, title)
-
-        output = "/tmp/test.html"
-        with open(output, "w", encoding="utf-8") as f:
-            f.write(html_file)
-
-        bot.send_document(m.chat.id, open(output, "rb"),
-                          caption="Your HTML MCQ Test Ready ✔")
-
-    except Exception as e:
-        bot.reply_to(m, f"Error: {e}")
+    return data
 
 
-# -----------------------------------------------------------------
-# RUN BOT + FLASK (REQUIRED FOR RENDER FREE PLAN)
-# -----------------------------------------------------------------
-def run_bot():
-    bot.infinity_polling()
+# -------------------------------
+# On PDF Upload
+# -------------------------------
+@bot.message_handler(content_types=['document'])
+def handle_pdf(message):
+    file = bot.get_file(message.document.file_id)
+    path = f"{message.document.file_id}.pdf"
+    downloaded = bot.download_file(file.file_path)
 
-threading.Thread(target=run_bot).start()
+    with open(path, "wb") as f:
+        f.write(downloaded)
 
+    bot.reply_to(message, "📥 PDF received!\n⏳ Extracting text...")
 
-# Flask server (port 10000 for Render free plan)
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    text = extract_text_from_pdf(path)
 
+    bot.reply_to(message, "🧠 Creating MCQ Test using Gemini... Wait...")
 
+    questions = create_mcq(text)
 
+    bot.reply_to(message, f"✔️ {len(questions)} questions generated!")
 
+    html = generate_test_html(questions)
 
+    html_file = "test.html"
+    with open(html_file, "w", encoding="utf-8") as f:
+        f.write(html)
+
+    # Send file
+    with open(html_file, "rb") as f:
+        bot.send_document(message.chat.id, f, caption="🎉 Your Test is Ready!")
+
+# -------------------------------
+# START
+# -------------------------------
+@bot.message_handler(commands=['start'])
+def start(message):
+    bot.reply_to(message, "Send me a PDF in Gujarati and I will create a full MCQ TEST HTML for you!")
+
+print("BOT STARTED...")
+bot.infinity_polling()
