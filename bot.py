@@ -4,20 +4,33 @@ import html
 import json
 import google.generativeai as genai
 from datetime import datetime
+from flask import Flask
 
-# -----------------------------------------------------------------
-#  DIRECT TOKEN SETTING (NO ENVIRONMENT NEEDED)
-# -----------------------------------------------------------------
-TELEGRAM_TOKEN = "8170315201:AAFG-m59j0-yxn02ZSxXjAYqR8fJt5OJJ_k"
-GEMINI_API_KEY = "AIzaSyB5TA6nDIj8VARsC4LPfdxu7_HBnetmPg8"
+# ------------------------------------------------------
+# TOKENS (set here, no Render env needed)
+# ------------------------------------------------------
+TELEGRAM_TOKEN = "PASTE_YOUR_TELEGRAM_BOT_TOKEN_HERE"
+GEMINI_API_KEY = "PASTE_YOUR_GEMINI_API_KEY_HERE"
 
+# ------------------------------------------------------
+# TELEGRAM + GEMINI SETUP
+# ------------------------------------------------------
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-1.5-flash")
 
-# -----------------------------------------------------------------
-# PDF TEXT EXTRACTOR
-# -----------------------------------------------------------------
+# ------------------------------------------------------
+# DUMMY FLASK APP FOR RENDER (keeps port open)
+# ------------------------------------------------------
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Telegram MCQ Bot Running Successfully!"
+
+# ------------------------------------------------------
+# PDF EXTRACTOR
+# ------------------------------------------------------
 def extract_pdf_text(path):
     pages = []
     with pdfplumber.open(path) as pdf:
@@ -28,9 +41,9 @@ def extract_pdf_text(path):
                 pages.append("")
     return "\n\n".join(pages)
 
-# -----------------------------------------------------------------
+# ------------------------------------------------------
 # GEMINI MCQ PARSER
-# -----------------------------------------------------------------
+# ------------------------------------------------------
 def parse_mcqs_with_gemini(text):
     prompt = """
 Extract all MCQ questions from this Gujarati/Hindi text.
@@ -53,9 +66,9 @@ TEXT:
             return json.loads(match.group())
         return []
 
-# -----------------------------------------------------------------
+# ------------------------------------------------------
 # HTML TEST GENERATOR
-# -----------------------------------------------------------------
+# ------------------------------------------------------
 def generate_html(mcqs, title):
 
     safe = []
@@ -112,7 +125,6 @@ function render() {
 function selectOpt(qn,on,el){
     if(ans[qn] !== null) return;
     ans[qn] = on;
-
     let parent = el.parentNode;
     [...parent.children].forEach((x,idx)=>{
         x.style.pointerEvents = "none";
@@ -148,12 +160,12 @@ render();
 """
     return html_code
 
-# -----------------------------------------------------------------
-#   TELEGRAM BOT HANDLER
-# -----------------------------------------------------------------
+# ------------------------------------------------------
+# TELEGRAM BOT HANDLERS
+# ------------------------------------------------------
 @bot.message_handler(commands=['start'])
 def start(m):
-    bot.reply_to(m, "Send Gujarati/Hindi PDF.\nI'll generate MCQ Test HTML using Gemini AI.")
+    bot.reply_to(m, "Send Gujarati/Hindi PDF.\nI'll generate MCQ Test HTML using Gemini AI 🤖")
 
 @bot.message_handler(content_types=['document'])
 def pdf_handler(m):
@@ -178,18 +190,27 @@ def pdf_handler(m):
         bot.send_message(m.chat.id, "✔ MCQs detected.\nGenerating HTML Test…")
 
         title = (m.document.file_name or "Test").replace(".pdf","")
-
         html_file = generate_html(mcqs, title)
 
         output = "/tmp/test.html"
         with open(output, "w", encoding="utf-8") as f:
             f.write(html_file)
 
-        bot.send_document(m.chat.id, open(output, "rb"),
-                          caption="Your HTML Test is Ready ✔")
+        bot.send_document(m.chat.id, open(output, "rb"), caption="Your HTML Test is Ready ✔")
 
     except Exception as e:
         bot.reply_to(m, f"Error: {e}")
 
-print("Bot running…")
-bot.infinity_polling()
+# ------------------------------------------------------
+# RUN EVERYTHING
+# ------------------------------------------------------
+import threading
+
+def run_bot():
+    bot.infinity_polling()
+
+threading.Thread(target=run_bot).start()
+
+# Flask server for Render
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000)
