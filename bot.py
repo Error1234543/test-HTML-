@@ -4,8 +4,8 @@ import google.generativeai as genai
 from flask import Flask
 import threading
 
-TELEGRAM_TOKEN = "YOUR_BOT_TOKEN"
-GEMINI_API_KEY = "YOUR_KEY"
+TELEGRAM_TOKEN = "8170315201:AAFG-m59j0-yxn02ZSxXjAYqR8fJt5OJJ_k"
+GEMINI_API_KEY = "AIzaSyB5TA6nDIj8VARsC4LPfdxu7_HBnetmPg8"
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 genai.configure(api_key=GEMINI_API_KEY)
