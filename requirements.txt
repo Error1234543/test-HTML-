@@ -1,4 +1,5 @@
-PyMuPDF==1.24.3
-python-telegram-bot==13.15
 Flask==3.0.0
+python-telegram-bot==13.15
 google-generativeai==0.5.2
+PyMuPDF==1.24.3
+gunicorn
