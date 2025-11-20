@@ -1,9 +1,6 @@
-
-aiogram==3.4.1
+pyTelegramBotAPI
 google-cloud-vision
-python-dotenv
-Pillow
-pytesseract
-pdf2image
-reportlab
+google-generativeai
+grpcio==1.62.1
+protobuf==3.20.3
 requests
