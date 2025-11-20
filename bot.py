@@ -1,140 +1,121 @@
 import os
-import re
-import fitz
+import telebot
+from google.cloud import vision
 import google.generativeai as genai
-from flask import Flask, request
-from telegram import Bot, Update
-from telegram.ext import Dispatcher, MessageHandler, Filters, CommandHandler
-from telegram.ext import CallbackContext
+import json
 
-# -------------------------
-#   ENV Variables
-# -------------------------
-TOKEN = os.getenv("8170315201:AAFG-m59j0-yxn02ZSxXjAYqR8fJt5OJJ_k")
-GEMINI_KEY = os.getenv("AIzaSyB5TA6nDIj8VARsC4LPfdxu7_HBnetmPg8")
+# Load keys
+TOKEN = os.getenv("TELEGRAM_TOKEN")
+GEMINI_KEY = os.getenv("GEMINI_API_KEY")
+GOOGLE_APPLICATION_CREDENTIALS = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
 
-if not TOKEN or not GEMINI_KEY:
-    raise ValueError("ERROR: Please set GEMINI_API_KEY and TELEGRAM_TOKEN in environment variables!")
+bot = telebot.TeleBot(TOKEN)
 
-# Configure Gemini
+# Google Vision OCR
+def extract_text_from_pdf(path):
+    client = vision.ImageAnnotatorClient()
+    with open(path, "rb") as f:
+        content = f.read()
+
+    image = vision.Image(content=content)
+    response = client.document_text_detection(image=image)
+
+    if response.error.message:
+        raise Exception(response.error.message)
+
+    return response.full_text_annotation.text
+
+
+# Gemini MCQ Detector
 genai.configure(api_key=GEMINI_KEY)
 
-app = Flask(__name__)
-bot = Bot(token=TOKEN)
-
-
-# -------------------------
-#   PDF Extract
-# -------------------------
-def extract_text_without_answer_key(file_bytes):
-    pdf = fitz.open(stream=file_bytes, filetype="pdf")
-    full_text = ""
-
-    for page in pdf:
-        full_text += page.get_text()
-
-    pdf.close()
-
-    # Remove Answer Key region
-    patterns = [
-        r"ANSWER KEY.*",  
-        r"ANSWERS.*",
-        r"SOLUTION.*",
-        r"CORRECT ANSWERS.*",
-        r"ANSWER SHEET.*",
-        r"KEY:\s*.*",
-        r"\bQ\s*\d+\s*-\s*[A-D]\b",  
-    ]
-
-    for p in patterns:
-        full_text = re.sub(p, "", full_text, flags=re.IGNORECASE | re.DOTALL)
-
-    return full_text.strip()
-
-
-# -------------------------
-#   Generate MCQ using AI
-# -------------------------
-def generate_quiz(text):
+def detect_mcqs_from_text(text):
     prompt = f"""
-Extract MCQ questions strictly from this text.
-Ignore any answer key completely.
-Output should be in clean format:
+    Gujarati NEET/JEE test PDF text:
 
-Q1. question text
-A) option
-B) option
-C) option
-D) option
-Correct: A
+    {text}
 
-Text:
-{text}
-"""
+    Extract MCQs EXACTLY.
+    OPTIONS and QUESTIONS must remain in Gujarati.
+    RETURN STRICT JSON ONLY:
 
+    {{
+        "questions":[
+            {{
+                "q":"question text",
+                "options":["Option A","Option B","Option C","Option D"],
+                "answer":"A"
+            }}
+        ]
+    }}
+    """
     model = genai.GenerativeModel("gemini-1.5-flash")
-    response = model.generate_content(prompt)
-    return response.text
+    res = model.generate_content(prompt)
+
+    try:
+        return json.loads(res.text)
+    except:
+        return {"questions": []}
 
 
-# -------------------------
-#   Start Command
-# -------------------------
-def start(update: Update, context: CallbackContext):
-    update.message.reply_text("PDF bhejo, main MCQ bana dunga 😎")
+# HTML generator (Pro Level AKDM)
+def generate_html(data):
+    html = """
+    <html><head><meta charset='UTF-8'>
+    <style>
+    body{font-family:Arial;margin:20px;background:#f8f8f8;}
+    .box{background:white;padding:15px;border-radius:12px;margin-bottom:15px;box-shadow:0 2px 5px rgba(0,0,0,0.1);}
+    .q{font-weight:bold;font-size:18px;color:#222;}
+    .opt{margin-left:20px;}
+    .ans{color:green;font-weight:bold;}
+    </style></head><body>
+    """
+
+    for i, q in enumerate(data["questions"], 1):
+        html += f"""
+        <div class="box">
+            <p class="q">Q{i}. {q['q']}</p>
+            <div class="opt">
+                <ol>
+                    {''.join([f'<li>{o}</li>' for o in q['options']])}
+                </ol>
+            </div>
+            <p class='ans'>Answer: {q['answer']}</p>
+        </div>
+        """
+
+    html += "</body></html>"
+    return html
 
 
-# -------------------------
-#   PDF Upload Handler
-# -------------------------
-def handle_pdf(update: Update, context: CallbackContext):
-    file = update.message.document
+# Telegram handlers
+@bot.message_handler(commands=['html'])
+def ask_pdf(message):
+    bot.reply_to(message, "📄 Send your NEET/JEE Gujarati PDF to convert into PRO-level HTML Quiz.")
 
-    if not file.file_name.endswith(".pdf"):
-        update.message.reply_text("Sirf PDF upload karo 😁")
-        return
+@bot.message_handler(content_types=['document'])
+def handle_pdf(message):
+    file_info = bot.get_file(message.document.file_id)
+    downloaded = bot.download_file(file_info.file_path)
 
-    file_bytes = file.get_file().download_as_bytearray()
+    file_path = f"/tmp/{message.document.file_name}"
+    with open(file_path, "wb") as f:
+        f.write(downloaded)
 
-    update.message.reply_text("⏳ Extracting PDF...")
+    bot.reply_to(message, "🔍 Scanning Gujarati PDF…")
 
-    clean_text = extract_text_without_answer_key(file_bytes)
+    text = extract_text_from_pdf(file_path)
+    bot.reply_to(message, "🤖 Extracting MCQs using Gemini…")
 
-    update.message.reply_text("🤖 Generating MCQs...")
+    mcqs = detect_mcqs_from_text(text)
+    html = generate_html(mcqs)
 
-    quiz = generate_quiz(clean_text)
+    output = file_path.replace(".pdf", ".html")
+    with open(output, "w", encoding="utf-8") as f:
+        f.write(html)
 
-    update.message.reply_text("✅ Quiz Ready!\n\n" + quiz)
-
-
-# -------------------------
-#   Webhook Route
-# -------------------------
-@app.route(f"/{TOKEN}", methods=["POST"])
-def webhook():
-    update = Update.de_json(request.get_json(force=True), bot)
-    dispatcher.process_update(update)
-    return "OK", 200
+    bot.send_document(message.chat.id, open(output, "rb"))
 
 
-# -------------------------
-#   Dispatcher
-# -------------------------
-dispatcher = Dispatcher(bot, None, workers=0)
-dispatcher.add_handler(CommandHandler("start", start))
-dispatcher.add_handler(MessageHandler(Filters.document.mime_type("application/pdf"), handle_pdf))
-
-
-# -------------------------
-#   App Home
-# -------------------------
-@app.route("/")
-def home():
-    return "Bot Running!"
-
-
-# -------------------------
-#   Run Local (optional)
-# -------------------------
-if __name__ == "__main__":
-    app.run(debug=True)
+print("BOT RUNNING…")
+bot.polling()
