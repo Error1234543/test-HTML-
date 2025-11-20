@@ -1,5 +1,9 @@
-Flask==3.0.0
-python-telegram-bot==13.15
-google-generativeai==0.5.2
-PyMuPDF==1.24.3
-gunicorn
+
+aiogram==3.4.1
+google-cloud-vision
+python-dotenv
+Pillow
+pytesseract
+pdf2image
+reportlab
+requests
