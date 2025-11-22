@@ -1,6 +1,3 @@
-pyTelegramBotAPI
-google-cloud-vision
-google-generativeai
-grpcio==1.62.1
-protobuf==3.20.3
-requests
+
+pyTelegramBotAPI==4.13.0
+python-dotenv
