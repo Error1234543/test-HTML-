@@ -1,121 +1,155 @@
+
+#!/usr/bin/env python3
+"""
+Telegram Mini-App Bot for opening your hosted quiz pages (index/quiz).
+Usage: fill .env, install requirements, run.
+"""
 import os
-import telebot
-from google.cloud import vision
-import google.generativeai as genai
 import json
+import logging
+import urllib.parse
+from typing import Dict, List
 
-# Load keys
-TOKEN = os.getenv("TELEGRAM_TOKEN")
-GEMINI_KEY = os.getenv("GEMINI_API_KEY")
-GOOGLE_APPLICATION_CREDENTIALS = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+from telebot import TeleBot, types
+from dotenv import load_dotenv
 
-bot = telebot.TeleBot(TOKEN)
+# load env
+load_dotenv()
 
-# Google Vision OCR
-def extract_text_from_pdf(path):
-    client = vision.ImageAnnotatorClient()
-    with open(path, "rb") as f:
-        content = f.read()
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+BASE_URL = os.getenv("BASE_URL", "").strip() or "https://neetjeegujrati.netlify.app"
+OWNER_ID = int(os.getenv("OWNER_ID", "0")) if os.getenv("OWNER_ID") else None
+ALLOWED_GROUP = int(os.getenv("ALLOWED_GROUP", "0")) if os.getenv("ALLOWED_GROUP") else None
+MANIFEST_PATH = os.getenv("MANIFEST_PATH", "manifest.json")
 
-    image = vision.Image(content=content)
-    response = client.document_text_detection(image=image)
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN not set in .env")
 
-    if response.error.message:
-        raise Exception(response.error.message)
+# logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
+logger = logging.getLogger(__name__)
 
-    return response.full_text_annotation.text
+bot = TeleBot(BOT_TOKEN, parse_mode="Markdown")
+
+# load manifest.json
+def load_manifest(path: str) -> Dict[str, List[Dict]]:
+    if not os.path.exists(path):
+        logger.error("Manifest file not found: %s", path)
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return data
+
+manifest = load_manifest(MANIFEST_PATH)
 
 
-# Gemini MCQ Detector
-genai.configure(api_key=GEMINI_KEY)
+# helper to ensure callback_data is safe
+def safe_cb(s: str) -> str:
+    # use quote_plus to preserve spaces and special chars
+    return urllib.parse.quote_plus(s)
 
-def detect_mcqs_from_text(text):
-    prompt = f"""
-    Gujarati NEET/JEE test PDF text:
 
-    {text}
+def unsafed_cb(s: str) -> str:
+    return urllib.parse.unquote_plus(s)
 
-    Extract MCQs EXACTLY.
-    OPTIONS and QUESTIONS must remain in Gujarati.
-    RETURN STRICT JSON ONLY:
 
-    {{
-        "questions":[
-            {{
-                "q":"question text",
-                "options":["Option A","Option B","Option C","Option D"],
-                "answer":"A"
-            }}
-        ]
-    }}
-    """
-    model = genai.GenerativeModel("gemini-1.5-flash")
-    res = model.generate_content(prompt)
+# ---------------- COMMANDS ----------------
+@bot.message_handler(commands=["start", "menu"])
+def cmd_start(msg: types.Message):
+    # optional group restriction
+    if ALLOWED_GROUP and msg.chat.type in ("private", "group", "supergroup"):
+        # if in private chat we allow, otherwise if group check
+        pass  # no action; we will enforce for web buttons if desired
 
+    kb = types.InlineKeyboardMarkup()
+    if not manifest:
+        bot.send_message(msg.chat.id, "❗️ No tests available (manifest empty).")
+        return
+
+    # Add folders
+    for folder in manifest.keys():
+        kb.add(types.InlineKeyboardButton(text=folder, callback_data=f"folder:{safe_cb(folder)}"))
+
+    # Add direct "Open Website" button
+    kb.add(types.InlineKeyboardButton(text="Open Test Site", url=BASE_URL))
+
+    bot.send_message(msg.chat.id, "📁 *Select Test Category*", reply_markup=kb)
+
+
+# ---------------- CALLBACKS ----------------
+@bot.callback_query_handler(func=lambda c: c.data and c.data.startswith("folder:"))
+def cb_folder(call: types.CallbackQuery):
     try:
-        return json.loads(res.text)
-    except:
-        return {"questions": []}
+        folder_raw = call.data.split(":", 1)[1]
+        folder = unsafed_cb(folder_raw)
+        tests = manifest.get(folder)
+        if tests is None:
+            bot.answer_callback_query(call.id, "Folder not found.", show_alert=True)
+            return
+
+        kb = types.InlineKeyboardMarkup(row_width=1)
+
+        for t in tests:
+            # build final URL
+            test_file = t.get("file", "")
+            # Encode the test file part to be safe in URL query param
+            encoded_test = urllib.parse.quote(test_file, safe="/:?=&")
+            test_url = f"{BASE_URL.rstrip('/')}/quiz.html?test={encoded_test}"
+
+            # If you want to restrict opening tests to a certain group, you can check here:
+            # For WebApp button, telebot supports web_app parameter (TeleBot >= 4.x).
+            kb.add(types.InlineKeyboardButton(text=t.get("name", "Test"), web_app=types.WebAppInfo(url=test_url)))
+
+        # Back button
+        kb.add(types.InlineKeyboardButton(text="⬅ Back", callback_data="back:"))
+
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=f"📝 *{folder} — Select Test*",
+            reply_markup=kb
+        )
+        bot.answer_callback_query(call.id)
+    except Exception as e:
+        logger.exception("cb_folder error: %s", e)
+        bot.answer_callback_query(call.id, "Error opening folder.")
 
 
-# HTML generator (Pro Level AKDM)
-def generate_html(data):
-    html = """
-    <html><head><meta charset='UTF-8'>
-    <style>
-    body{font-family:Arial;margin:20px;background:#f8f8f8;}
-    .box{background:white;padding:15px;border-radius:12px;margin-bottom:15px;box-shadow:0 2px 5px rgba(0,0,0,0.1);}
-    .q{font-weight:bold;font-size:18px;color:#222;}
-    .opt{margin-left:20px;}
-    .ans{color:green;font-weight:bold;}
-    </style></head><body>
-    """
+@bot.callback_query_handler(func=lambda c: c.data and c.data.startswith("back:"))
+def cb_back(call: types.CallbackQuery):
+    # re-show folders
+    kb = types.InlineKeyboardMarkup()
+    for folder in manifest.keys():
+        kb.add(types.InlineKeyboardButton(text=folder, callback_data=f"folder:{safe_cb(folder)}"))
+    kb.add(types.InlineKeyboardButton(text="Open Test Site", url=BASE_URL))
 
-    for i, q in enumerate(data["questions"], 1):
-        html += f"""
-        <div class="box">
-            <p class="q">Q{i}. {q['q']}</p>
-            <div class="opt">
-                <ol>
-                    {''.join([f'<li>{o}</li>' for o in q['options']])}
-                </ol>
-            </div>
-            <p class='ans'>Answer: {q['answer']}</p>
-        </div>
-        """
-
-    html += "</body></html>"
-    return html
+    bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text="📁 *Select Test Category*",
+        reply_markup=kb
+    )
+    bot.answer_callback_query(call.id)
 
 
-# Telegram handlers
-@bot.message_handler(commands=['html'])
-def ask_pdf(message):
-    bot.reply_to(message, "📄 Send your NEET/JEE Gujarati PDF to convert into PRO-level HTML Quiz.")
-
-@bot.message_handler(content_types=['document'])
-def handle_pdf(message):
-    file_info = bot.get_file(message.document.file_id)
-    downloaded = bot.download_file(file_info.file_path)
-
-    file_path = f"/tmp/{message.document.file_name}"
-    with open(file_path, "wb") as f:
-        f.write(downloaded)
-
-    bot.reply_to(message, "🔍 Scanning Gujarati PDF…")
-
-    text = extract_text_from_pdf(file_path)
-    bot.reply_to(message, "🤖 Extracting MCQs using Gemini…")
-
-    mcqs = detect_mcqs_from_text(text)
-    html = generate_html(mcqs)
-
-    output = file_path.replace(".pdf", ".html")
-    with open(output, "w", encoding="utf-8") as f:
-        f.write(html)
-
-    bot.send_document(message.chat.id, open(output, "rb"))
+# ---------------- ADMIN OPTIONAL ----------------
+@bot.message_handler(commands=["reload_manifest"])
+def cmd_reload_manifest(msg: types.Message):
+    # allow only owner
+    if OWNER_ID and msg.from_user.id != OWNER_ID:
+        bot.reply_to(msg, "Unauthorized.")
+        return
+    global manifest
+    manifest = load_manifest(MANIFEST_PATH)
+    bot.reply_to(msg, "Manifest reloaded.")
 
 
-print("BOT RUNNING…")
-bot.polling()
+# ---------------- START POLLING ----------------
+if __name__ == "__main__":
+    logger.info("Bot starting...")
+    try:
+        bot.infinity_polling(timeout=60, long_polling_timeout=60)
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user")
+    except Exception as e:
+        logger.exception("Fatal error: %s", e)
