@@ -3,51 +3,43 @@ import telebot
 from flask import Flask, request
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Example: https://yourrenderdomain.onrender.com/webhook
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Will set after deploy
 
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
-# -------------------------------------
-# SET/DELETE WEBHOOK
-# -------------------------------------
-bot.delete_webhook()
+# DELETE WEBHOOK FIRST
+try:
+    bot.delete_webhook()
+except:
+    pass
 
-bot.set_webhook(url=f"{WEBHOOK_URL}")
+# SET WEBHOOK IF URL PROVIDED
+if WEBHOOK_URL:
+    bot.set_webhook(url=WEBHOOK_URL)
+    print("Webhook set to:", WEBHOOK_URL)
+else:
+    print("⚠️ WEBHOOK_URL not set yet! Set after deploy.")
 
-print("Webhook set successfully:", WEBHOOK_URL)
 
-
-# -------------------------------------
-# FLASK ROUTE FOR TELEGRAM
-# -------------------------------------
 @app.route('/webhook', methods=['POST'])
-def webhook():
-    json_str = request.get_data().decode("utf-8")
-    update = telebot.types.Update.de_json(json_str)
+def receive_webhook():
+    update = telebot.types.Update.de_json(request.data.decode("utf-8"))
     bot.process_new_updates([update])
     return "OK", 200
 
 
-# -------------------------------------
-# TEST COMMAND
-# -------------------------------------
 @bot.message_handler(commands=['start'])
 def start(msg):
-    bot.reply_to(msg, "🚀 Bot is live with webhook!")
+    bot.reply_to(msg, "🚀 Webhook bot running on Render!")
 
 
-# -------------------------------------
-# NORMAL MESSAGE
-# -------------------------------------
 @bot.message_handler(func=lambda m: True)
 def echo(msg):
-    bot.reply_to(msg, "You said: " + msg.text)
+    bot.reply_to(msg, msg.text)
 
 
-# -------------------------------------
-# FLASK START
-# -------------------------------------
-if __name__ == "__main__":
-    port = int(os.getenv("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+# Flask app — DO NOT remove
+@app.route('/')
+def home():
+    return "Bot Running!", 200
