@@ -1,19 +1,22 @@
 import os
 import json
 import telebot
+from telebot import types
 from flask import Flask, request
 
+# ---------------- CONFIG ----------------
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 BASE_URL = os.getenv("BASE_URL", "https://neetjeegujrati.netlify.app")
 MANIFEST_PATH = os.getenv("MANIFEST_PATH", "manifest.json")
-RENDER_URL = os.getenv("RENDER_EXTERNAL_URL")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+OWNER_ID = os.getenv("OWNER_ID", "")
+ALLOWED_GROUP = os.getenv("ALLOWED_GROUP", "")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
 
-
-# Load Manifest
+# ---------------- LOAD MANIFEST ----------------
 def load_manifest():
     try:
         with open(MANIFEST_PATH, "r", encoding="utf-8") as f:
@@ -22,58 +25,76 @@ def load_manifest():
         return {}
 
 
-# ----------- COMMAND HANDLERS -------------
-
-@bot.message_handler(commands=['start'])
+# ---------------- START COMMAND ----------------
+@bot.message_handler(commands=["start"])
 def start(msg):
-    bot.reply_to(msg, "Bot is working 🎉\n\n/tests likho test list dekhne ke liye!")
+    kb = types.InlineKeyboardMarkup()
+
+    # Buttons
+    b1 = types.InlineKeyboardButton("📁 YAKEEN NEET GUJARATI 2026 TESTS", callback_data="yakeen")
+    b2 = types.InlineKeyboardButton("📁 Lakshya", callback_data="lakshya")
+    b3 = types.InlineKeyboardButton("📁 ALLEN TEST", callback_data="allen")
+    b4 = types.InlineKeyboardButton("➡️ Open Test Site", url=BASE_URL)
+
+    kb.add(b1)
+    kb.add(b2)
+    kb.add(b3)
+    kb.add(b4)
+
+    bot.send_message(
+        msg.chat.id,
+        "📘 *Select Test Category*",
+        reply_markup=kb,
+        parse_mode="Markdown"
+    )
 
 
-@bot.message_handler(commands=['tests'])
-def tests(msg):
-
+# --------------- CALLBACK HANDLER ----------------
+@bot.callback_query_handler(func=lambda call: True)
+def callback(call):
     data = load_manifest()
-    if not data:
-        bot.reply_to(msg, "⚠️ manifest.json not found!")
+
+    if call.data == "yakeen":
+        send_test_list(call.message.chat.id, data.get("YAKEEN NEET GUJARATI 2026 TESTS", []))
+
+    elif call.data == "lakshya":
+        send_test_list(call.message.chat.id, data.get("Lakshya", []))
+
+    elif call.data == "allen":
+        send_test_list(call.message.chat.id, data.get("ALLEN TEST", []))
+
+
+# --------------- SEND TEST LIST ----------------
+def send_test_list(chat_id, tests):
+    if not tests:
+        bot.send_message(chat_id, "⚠️ No tests available!")
         return
 
-    for folder, tests in data.items():
-        text = f"📁 *{folder}*\n\n"
-        for t in tests:
-            test_name = t.get("name", "Untitled Test")
-            file_path = t.get("file")
-            test_link = f"{BASE_URL}/quiz.html?test={file_path}"
+    for t in tests:
+        name = t.get("name", "Test")
+        file = t.get("file", "")
 
-            text += f"🔹 *{test_name}*\n➡️ {test_link}\n\n"
+        link = f"{BASE_URL}/quiz.html?test={file}"
 
-        bot.send_message(msg.chat.id, text, parse_mode="Markdown")
+        text = f"📝 *{name}*\n➡️ {link}"
+        bot.send_message(chat_id, text, parse_mode="Markdown")
 
 
-
-
-# ----------- WEBHOOK HANDLER -------------
-
-@app.route("/" + BOT_TOKEN, methods=['POST'])
+# ---------------- WEBHOOK SETUP ----------------
+@app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
-    update = telebot.types.Update.de_json(request.data.decode('utf-8'))
+    json_str = request.get_data().decode("utf-8")
+    update = telebot.types.Update.de_json(json_str)
     bot.process_new_updates([update])
     return "OK", 200
 
 
-
+# ---------------- MAIN ----------------
 if __name__ == "__main__":
-
-    # Auto webhook URL generate
-    if RENDER_URL:
-        WEBHOOK_URL = f"{RENDER_URL}/{BOT_TOKEN}"
+    if not WEBHOOK_URL:
+        print("⚠️ WEBHOOK_URL not set! Set after first deploy.")
     else:
-        WEBHOOK_URL = None
-
-    print("WEBHOOK URL =", WEBHOOK_URL)
-
-    if WEBHOOK_URL:
         bot.remove_webhook()
         bot.set_webhook(url=WEBHOOK_URL)
-        print("Webhook set successfully!")
 
     app.run(host="0.0.0.0", port=10000)
