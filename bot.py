@@ -34,7 +34,7 @@ def start(message):
     if message.from_user.id not in data["allowed"]:
         bot.reply_to(
             message,
-            "❌ You are *NOT* an authorized user!\n\nBuy premium: t.me/sonic8307",
+            "❌ You are *NOT* an authorized user!\n\nBuy premium: t.me/Xdsonic",
             parse_mode="Markdown"
         )
         return
