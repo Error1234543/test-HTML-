@@ -1,15 +1,15 @@
+import os
+import json
+import time
+from flask import Flask, request
 import telebot
 from telebot import types
-from flask import Flask, request
-import json
-import os
 
 # ---------------- CONFIG ----------------
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-OWNER_ID = int(os.getenv("OWNER_ID", 7447651332))
+BOT_TOKEN = os.getenv("BOT_TOKEN") or "<YOUR_BOT_TOKEN_HERE>"
+OWNER_ID = int(os.getenv("OWNER_ID") or 7447651332)
 WEBAPP_URL = "https://neetjeegujrati.netlify.app"   # Mini App URL
 USERS_FILE = "users.json"
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # https://your-render-url.onrender.com
 
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
@@ -27,11 +27,10 @@ def save_users(data):
     with open(USERS_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
-# ---------------- /start ----------------
+# ---------------- BOT COMMANDS ----------------
 @bot.message_handler(commands=['start'])
 def start(message):
     data = load_users()
-
     if message.from_user.id not in data["allowed"]:
         bot.reply_to(
             message,
@@ -54,7 +53,6 @@ def start(message):
         parse_mode="Markdown"
     )
 
-# ---------------- /add userID ----------------
 @bot.message_handler(commands=['add'])
 def add_user(message):
     if message.from_user.id != OWNER_ID:
@@ -73,17 +71,14 @@ def add_user(message):
         return
 
     data = load_users()
-
     if user_id in data["allowed"]:
         bot.reply_to(message, "✔️ This user is already authorized!")
         return
 
     data["allowed"].append(user_id)
     save_users(data)
-
     bot.reply_to(message, f"✔️ User `{user_id}` added successfully!", parse_mode="Markdown")
 
-# ---------------- /remove userID ----------------
 @bot.message_handler(commands=['remove'])
 def remove_user(message):
     if message.from_user.id != OWNER_ID:
@@ -102,17 +97,14 @@ def remove_user(message):
         return
 
     data = load_users()
-
     if user_id not in data["allowed"]:
         bot.reply_to(message, "❌ This user is NOT in the list!")
         return
 
     data["allowed"].remove(user_id)
     save_users(data)
-
     bot.reply_to(message, f"🗑 User `{user_id}` removed successfully!", parse_mode="Markdown")
 
-# ---------------- /auth list ----------------
 @bot.message_handler(commands=['auth'])
 def auth_list(message):
     if message.from_user.id != OWNER_ID:
@@ -122,7 +114,6 @@ def auth_list(message):
     data = load_users()
     text = "🔐 *Authorized Users List:*\n\n"
     text += "\n".join(f"• `{uid}`" for uid in data["allowed"])
-
     bot.reply_to(message, text, parse_mode="Markdown")
 
 # ---------------- WEBHOOK HANDLER ----------------
@@ -137,13 +128,29 @@ def webhook():
 def home():
     return "Bot is running via Webhook!", 200
 
-# ---------------- START WEBHOOK ----------------
+# ---------------- SAFE WEBHOOK SETUP ----------------
+def setup_webhook():
+    WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+    if not WEBHOOK_URL:
+        print("⚠️ WEBHOOK_URL not set. Bot will not register webhook yet.")
+        return
+
+    while True:
+        try:
+            print("🔄 Removing old webhook...")
+            bot.remove_webhook()
+            print(f"⚙️ Setting new webhook: {WEBHOOK_URL}/{BOT_TOKEN}")
+            bot.set_webhook(url=f"{WEBHOOK_URL}/{BOT_TOKEN}")
+            print("✅ Webhook set successfully!")
+            break
+        except Exception as e:
+            print("❌ Failed to set webhook. Retrying in 5 seconds...", e)
+            time.sleep(5)
+
+# ---------------- START SERVER ----------------
 if __name__ == "__main__":
-    print("🔄 Deleting old webhook...")
-    bot.remove_webhook()
+    # Setup webhook if URL exists
+    setup_webhook()
 
-    print("⚙️ Setting new webhook...")
-    bot.set_webhook(url=f"{WEBHOOK_URL}/{BOT_TOKEN}")
-
-    print("🚀 Starting Flask Webhook Server...")
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
