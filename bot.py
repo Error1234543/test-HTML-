@@ -1,17 +1,20 @@
 import telebot
 from telebot import types
+from flask import Flask, request
 import json
 import os
 
 # ---------------- CONFIG ----------------
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-WEBAPP_URL = "https://neetjeegujrati.netlify.app"   # ⭐ Your Mini-App Website
 OWNER_ID = int(os.getenv("OWNER_ID", 7447651332))
+WEBAPP_URL = "https://neetjeegujrati.netlify.app"   # Mini App URL
 USERS_FILE = "users.json"
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # https://your-render-url.onrender.com
 
 bot = telebot.TeleBot(BOT_TOKEN)
+app = Flask(__name__)
 
-# ---------------- LOAD AUTH USERS ----------------
+# ---------------- LOAD USERS ----------------
 if not os.path.exists(USERS_FILE):
     with open(USERS_FILE, "w") as f:
         json.dump({"allowed": [OWNER_ID]}, f)
@@ -37,7 +40,6 @@ def start(message):
         )
         return
 
-    # Mini App Button
     keyboard = types.InlineKeyboardMarkup()
     web_btn = types.InlineKeyboardButton(
         text="🚀 Open NEET/JEE Gujarati App",
@@ -52,7 +54,6 @@ def start(message):
         parse_mode="Markdown"
     )
 
-
 # ---------------- /add userID ----------------
 @bot.message_handler(commands=['add'])
 def add_user(message):
@@ -60,10 +61,15 @@ def add_user(message):
         bot.reply_to(message, "❌ Only OWNER can add users!")
         return
 
-    try:
-        user_id = int(message.text.split()[1])
-    except:
+    parts = message.text.split()
+    if len(parts) != 2:
         bot.reply_to(message, "Usage: `/add 123456789`", parse_mode="Markdown")
+        return
+
+    try:
+        user_id = int(parts[1])
+    except:
+        bot.reply_to(message, "❌ Invalid User ID!")
         return
 
     data = load_users()
@@ -75,8 +81,36 @@ def add_user(message):
     data["allowed"].append(user_id)
     save_users(data)
 
-    bot.reply_to(message, f"✔️ User {user_id} added successfully!")
+    bot.reply_to(message, f"✔️ User `{user_id}` added successfully!", parse_mode="Markdown")
 
+# ---------------- /remove userID ----------------
+@bot.message_handler(commands=['remove'])
+def remove_user(message):
+    if message.from_user.id != OWNER_ID:
+        bot.reply_to(message, "❌ Only OWNER can remove users!")
+        return
+
+    parts = message.text.split()
+    if len(parts) != 2:
+        bot.reply_to(message, "Usage: `/remove 123456789`", parse_mode="Markdown")
+        return
+
+    try:
+        user_id = int(parts[1])
+    except:
+        bot.reply_to(message, "❌ Invalid User ID!")
+        return
+
+    data = load_users()
+
+    if user_id not in data["allowed"]:
+        bot.reply_to(message, "❌ This user is NOT in the list!")
+        return
+
+    data["allowed"].remove(user_id)
+    save_users(data)
+
+    bot.reply_to(message, f"🗑 User `{user_id}` removed successfully!", parse_mode="Markdown")
 
 # ---------------- /auth list ----------------
 @bot.message_handler(commands=['auth'])
@@ -86,12 +120,30 @@ def auth_list(message):
         return
 
     data = load_users()
-    text = "🔐 *Authorized Users:*\n\n"
-    text += "\n".join(str(uid) for uid in data["allowed"])
+    text = "🔐 *Authorized Users List:*\n\n"
+    text += "\n".join(f"• `{uid}`" for uid in data["allowed"])
 
     bot.reply_to(message, text, parse_mode="Markdown")
 
+# ---------------- WEBHOOK HANDLER ----------------
+@app.route(f'/{BOT_TOKEN}', methods=['POST'])
+def webhook():
+    json_str = request.get_data().decode("UTF-8")
+    update = telebot.types.Update.de_json(json_str)
+    bot.process_new_updates([update])
+    return "OK", 200
 
-# ---------------- RUN BOT ----------------
-print("BOT is running...")
-bot.infinity_polling(skip_pending=True)
+@app.route('/', methods=['GET'])
+def home():
+    return "Bot is running via Webhook!", 200
+
+# ---------------- START WEBHOOK ----------------
+if __name__ == "__main__":
+    print("🔄 Deleting old webhook...")
+    bot.remove_webhook()
+
+    print("⚙️ Setting new webhook...")
+    bot.set_webhook(url=f"{WEBHOOK_URL}/{BOT_TOKEN}")
+
+    print("🚀 Starting Flask Webhook Server...")
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
